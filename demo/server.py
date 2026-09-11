@@ -1,9 +1,12 @@
-"""Vāgdhenu standalone warm server for a dedicated GPU (ece A6000).
+"""Vāgdhenu standalone warm server for a dedicated GPU (ece A6000) or for local use on Mac/CPU.
 Loads the model ONCE at startup and serves it — no ZeroGPU, no per-visitor quota wall.
 Guards: one shloka per request + 10 renders/IP/day (src/limits.py). Run in the `indicf5` env."""
 import os, sys, json
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(HERE, "src")
+# resolves whether the repo is checked out normally (demo/ + ../src/) or flattened for deployment
+# (server.py + ./src/, as HF Spaces prefer). First path that has render_core.py wins.
+SRC = next((p for p in (os.path.join(os.path.dirname(HERE), "src"), os.path.join(HERE, "src"))
+            if os.path.exists(os.path.join(p, "render_core.py"))), os.path.join(HERE, "src"))
 sys.path.insert(0, SRC)
 import device as _device   # noqa: F401  — MUST precede any torch import (arms the MPS fallback)
 import gradio as gr
@@ -13,7 +16,12 @@ from indic_transliteration import sanscript as _S
 
 BANK  = os.path.join(SRC, "reference_bank", "bank.json")
 VOCAB = os.path.join(SRC, "reference_bank", "vocab.txt")
-VOICE = os.environ.get("VAGDHENU_VOICE", os.path.join(HERE, "weights", "voice_steer.pt"))
+# voice checkpoint: try the local repo layout (models/), then the flattened deployment layout
+# (demo/weights/voice_steer.pt), then bail. VAGDHENU_VOICE overrides both.
+_VOICE_REPO      = os.path.join(os.path.dirname(HERE), "models", "voice_steer_ema_2026-06-17.pt")
+_VOICE_FLATTENED = os.path.join(HERE, "weights", "voice_steer.pt")
+VOICE = os.environ.get("VAGDHENU_VOICE",
+                       _VOICE_REPO if os.path.exists(_VOICE_REPO) else _VOICE_FLATTENED)
 _VOC_GPUBOX = "/home/ece/Prathosh/CHAMPION_2026-06-11/voc_bigvgan_EMA_2026-06-11.pth"
 _VOC_LOCAL  = os.path.join(os.path.dirname(HERE), "models", "voc_bigvgan_EMA_2026-06-11.pth")
 VOC   = os.environ.get("VAGDHENU_VOC", _VOC_GPUBOX if os.path.exists(_VOC_GPUBOX) else _VOC_LOCAL)
@@ -101,4 +109,9 @@ with gr.Blocks(title="Vāgdhenu — Sanskrit chant", theme=gr.themes.Soft()) as 
     gr.Examples(examples=EXAMPLES, example_labels=EXAMPLE_LABELS, inputs=[txt,meter,seed], label="")
 
 if __name__=="__main__":
-    demo.queue(max_size=64, default_concurrency_limit=2).launch(server_name="0.0.0.0", server_port=7860, show_api=False)
+    # 127.0.0.1 by default so Gradio's post-launch self-health-check works on macOS (some network
+    # configs fail localhost self-connect when bound to 0.0.0.0). Set VAGDHENU_HOST=0.0.0.0 on a
+    # deployment that needs LAN access — the on-prem GPU box does this to serve prathosh.in.
+    _HOST = os.environ.get("VAGDHENU_HOST", "127.0.0.1")
+    _PORT = int(os.environ.get("VAGDHENU_PORT", "7860"))
+    demo.queue(max_size=64, default_concurrency_limit=2).launch(server_name=_HOST, server_port=_PORT, show_api=False)
