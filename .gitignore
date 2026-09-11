@@ -8,6 +8,10 @@ __pycache__/
 *.m4a
 !examples/**/*.wav
 .DS_Store
+.claude/
+out/
+# weight download target (scripts/download_weights.py)
+models/
 .venv/
 BigVGAN/
 demo/BigVGAN/

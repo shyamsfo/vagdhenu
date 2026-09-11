@@ -5,6 +5,7 @@ import os, sys, json
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "src")
 sys.path.insert(0, SRC)
+import device as _device   # noqa: F401  — MUST precede any torch import (arms the MPS fallback)
 import gradio as gr
 import limits
 from render_core import Renderer, detect_meter_key
@@ -13,13 +14,15 @@ from indic_transliteration import sanscript as _S
 BANK  = os.path.join(SRC, "reference_bank", "bank.json")
 VOCAB = os.path.join(SRC, "reference_bank", "vocab.txt")
 VOICE = os.environ.get("VAGDHENU_VOICE", os.path.join(HERE, "weights", "voice_steer.pt"))
-VOC   = os.environ.get("VAGDHENU_VOC",   "/home/ece/Prathosh/CHAMPION_2026-06-11/voc_bigvgan_EMA_2026-06-11.pth")
+_VOC_GPUBOX = "/home/ece/Prathosh/CHAMPION_2026-06-11/voc_bigvgan_EMA_2026-06-11.pth"
+_VOC_LOCAL  = os.path.join(os.path.dirname(HERE), "models", "voc_bigvgan_EMA_2026-06-11.pth")
+VOC   = os.environ.get("VAGDHENU_VOC", _VOC_GPUBOX if os.path.exists(_VOC_GPUBOX) else _VOC_LOCAL)
 AUTO  = "__auto__"
 NFE   = int(os.environ.get("VAGDHENU_NFE", "32"))
 
 print(f"[boot] loading model once  voice={VOICE}  nfe={NFE} …", flush=True)
-RENDERER = Renderer(VOICE, VOC, BANK, device="cuda", vocab_file=VOCAB, nfe=NFE)
-print("[boot] model warm, ready.", flush=True)
+RENDERER = Renderer(VOICE, VOC, BANK, vocab_file=VOCAB, nfe=NFE)   # device auto-detected
+print(f"[boot] model warm on {RENDERER.device}, ready.", flush=True)
 
 _bank = json.load(open(BANK, encoding="utf-8"))
 METERS = [k for k,v in _bank.items() if not k.startswith("_") and isinstance(v,dict) and "wav" in v]

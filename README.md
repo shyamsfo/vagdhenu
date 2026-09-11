@@ -25,18 +25,50 @@ pipeline/    data-prep (cut→pair→train) + build/assemble/QC
 demo/        Gradio app (HF ZeroGPU)
 docs/        scrubbed technical report + frontend/pipeline references
 examples/    sample inputs + rendered outputs
-scripts/     env setup + weight download
+scripts/     env setup, weight download, selftest harness, tts driver
 ```
 
 ## Install & quickstart
-Requires **Python 3.10** and a **CUDA 12.1 GPU**.
+Requires **Python 3.10**. Production target is a **CUDA 12.1 GPU**; Apple Silicon (Metal/MPS) and
+CPU also run — the backend is auto-detected, see *Running on a Mac* below.
 ```bash
-bash scripts/setup.sh    # torch+cu121, deps, BigVGAN, and downloads weights -> models/
+bash scripts/setup.sh    # torch (cu121 on Linux / arm64 on macOS), deps, BigVGAN, weights -> models/
 # render a Devanagari verse (+ meter) to a chanted wav:
 python src/render.py --shard examples/sample_shard.json --results /tmp/res.json --outdir out
 # -> out/sample_anushtubh.wav
 ```
 The batch renderer takes a shard JSON: `[{"id","meter","padas":[devanagari…],"seed","out"}]`. For one-off single-verse renders see `src/render_production.py`. `CHAMP_ROOT` env overrides the weights dir (default `models/`).
+
+### Running on a Mac
+Full setup and run order: **[`docs/MAC.md`](docs/MAC.md)**.
+
+Apple Silicon only — PyTorch has shipped no macOS x86_64 wheel since 2.2.2, so Intel Macs cannot run this.
+`src/device.py` picks the backend (`cuda` → `mps` → `cpu`) and arms `PYTORCH_ENABLE_MPS_FALLBACK`
+before torch loads, so the mel/ISTFT FFT kernels fall back to CPU on torch builds whose Metal
+coverage is incomplete instead of raising. Pin a backend by hand with `VAGDHENU_DEVICE=cpu|mps|cuda`.
+
+Expect it to be slow. On an A6000 the locked `nfe 64` config renders at RTF 1.24, `nfe 32` at 0.63.
+A modern 16-core x86 CPU renders anuṣṭubh at nfe 64 at RTF ~23 (about 1.5 min per hemistich) — the
+tech report's "~22 min per hemistich" figure was measured on much older hardware and is far too
+pessimistic. Apple Metal is verified end-to-end for anuṣṭubh at nfe 32 (all five hot kernels run
+native, no CPU fallback); wall-time RTF is unmeasured but expected to land between A6000 and CPU.
+Peak inference memory is 2.5 GB, so any Apple Silicon Mac has room. Also `brew install ffmpeg`
+(pydub decodes the reference clips). **Renders will not be bit-identical to the GPU output** —
+different backend, different kernel order — so the md5-identical guarantee holds on CUDA only.
+`demo/app.py` stays GPU-only (it imports HF ZeroGPU's `spaces`); use `demo/server.py` locally.
+
+## Scripts
+
+Four entrypoints live in `scripts/`. Run them from the repo root with the venv active.
+
+- **`scripts/setup.sh`** — one-shot bootstrap: installs torch + deps, clones NVIDIA BigVGAN, downloads weights into `models/`. Branches on `uname` so the same command works on Linux (CUDA 12.1) and Apple Silicon (Metal). Refuses Intel Macs.
+- **`scripts/download_weights.py`** — fetches the Vāgdhenu weights and the IndicF5 vocab into `$CHAMP_ROOT` (default `models/`). Called by `setup.sh`; run it directly to refresh.
+- **`scripts/selftest.py`** — six-stage smoke harness (environment → kernel coverage → text frontend → single render → batch render → mel-distance comparison). Stages 1–3 need no weights. See `docs/MAC.md` for the full flow.
+- **`scripts/tts.py`** — driver: takes a UTF-8 text file of one or more ślokas, splits on daṇḍas + newlines, drives `src/render.py`, and stitches the hemistich wavs into an MP3.
+  ```
+  python scripts/tts.py verse.txt                    # -> ./verse.mp3
+  python scripts/tts.py verse.txt -o /tmp/x.mp3 --nfe 32 --seed 42
+  ```
 
 ## Case studies
 - **MBTN** (Mahābhārata Tātparya Nirṇaya) — 32-adhyāya *video* deliverable (Devanagari + Kannada karaoke, tanpura), shipped.
