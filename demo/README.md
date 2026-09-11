@@ -31,32 +31,56 @@ seed hidden under Advanced). The choice is about hosting, not features.
 
 ## Mode 1 — Local
 
-Run everything on your own machine. The whole pipeline stays offline.
+Run everything on your own machine. The whole pipeline stays offline. Backend auto-detected:
+CUDA if you have it, MPS on Apple Silicon, CPU otherwise. Model loads once at startup and stays
+warm for the life of the process.
+
+### On Apple Silicon (Mac, MPS backend)
 
 ```bash
+brew install ffmpeg                                        # required — pydub decodes reference clips
 git clone git@github.com:shyamsfo/vagdhenu.git && cd vagdhenu
-python3.10 -m venv .venv && source .venv/bin/activate     # or `uv venv --seed .venv`
-bash scripts/setup.sh                                      # torch, deps, BigVGAN, weights
+git checkout mac-port
+python3.10 -m venv .venv && source .venv/bin/activate      # or `uv venv --seed .venv`
+bash scripts/setup.sh                                      # torch (arm64 PyPI wheel), deps, BigVGAN, weights
 export PYTHONPATH="$PWD/BigVGAN:$PYTHONPATH"
-
-# On macOS: brew install ffmpeg   (only needed if you also want scripts/tts.py to stitch mp3s)
-
-# Personal use: disable the per-IP daily cap and the single-shloka-per-request check
-export VAGDHENU_DAILY_LIMIT=0
-export VAGDHENU_MAX_AKSHARAS=0
-
+export VAGDHENU_DAILY_LIMIT=0 VAGDHENU_MAX_AKSHARAS=0      # personal use: disable abuse guards
 python demo/server.py
 # -> Open http://127.0.0.1:7860 in a browser
 ```
 
-Backend auto-detected: CUDA if you have it, MPS on Apple Silicon, CPU otherwise. Model loads once
-at startup (~30–90 s depending on backend) and stays warm for the life of the process.
+Model load takes ~60–90 s the first time on MPS. Each render is a couple of seconds.
 
-**Notes:**
-- Default bind is `127.0.0.1:7860`. To expose on your LAN, set `VAGDHENU_HOST=0.0.0.0`.
-- Without `VAGDHENU_DAILY_LIMIT=0`, you'll hit the 10-render/day cap after 10 requests — because
-  all your local browser calls come from `127.0.0.1`, which counts as one "IP." The check exists
-  to protect the public demo from abuse; it makes no sense when the server is just for you.
+### On Linux (CPU-only or CUDA)
+
+```bash
+sudo apt-get update && sudo apt-get install -y python3.10-venv ffmpeg
+git clone git@github.com:shyamsfo/vagdhenu.git && cd vagdhenu
+git checkout mac-port
+python3.10 -m venv .venv && source .venv/bin/activate
+bash scripts/setup.sh                                      # torch (cu121 wheel; harmless on CPU box, just ~3 GB disk)
+export PYTHONPATH="$PWD/BigVGAN:$PYTHONPATH"
+export VAGDHENU_DAILY_LIMIT=0 VAGDHENU_MAX_AKSHARAS=0
+# uncomment the next line only if the box is headless and you'll reach the UI over SSH / LAN:
+# export VAGDHENU_HOST=0.0.0.0
+python demo/server.py
+# -> Open http://127.0.0.1:7860 (or http://<box-ip>:7860 if VAGDHENU_HOST=0.0.0.0)
+```
+
+The Linux branch of `setup.sh` unconditionally uses PyTorch's `cu121` wheel index — that pulls
+~3 GB of CUDA runtime libraries even if you have no GPU. Torch falls back to CPU at runtime with
+no fuss; the extra disk is the only cost.
+
+**CPU performance** on a 16-core x86 box, measured (`nfe 32`, the `demo/server.py` default): about
+**~45 s per hemistich**, so a full 32-syllable anuṣṭubh takes ~90 s per request. Not real-time,
+but usable for personal pārāyaṇa. Weaker CPUs are proportionally slower.
+
+**Notes (both platforms):**
+- Default bind is `127.0.0.1:7860`. To expose on your LAN or reach it over SSH, set
+  `VAGDHENU_HOST=0.0.0.0` (or SSH-tunnel: `ssh -L 7860:localhost:7860 your-box`).
+- Without `VAGDHENU_DAILY_LIMIT=0`, you'll hit the 10-render/day cap after 10 requests — all your
+  local browser calls come from `127.0.0.1`, which counts as one "IP." The check exists to protect
+  the public demo from abuse; it makes no sense when the server is just for you.
 - `MAX_AKSHARAS=0` lets you paste longer input. Without it, anything over ~100 aksharas or with
   more than one full daṇḍa is rejected as "more than one shloka."
 
