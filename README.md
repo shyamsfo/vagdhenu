@@ -70,6 +70,18 @@ Four entrypoints live in `scripts/`. Run them from the repo root with the venv a
   python scripts/tts.py verse.txt -o /tmp/x.mp3 --nfe 32 --seed 42
   ```
 
+## Interactive UI
+
+The repo ships a Gradio web UI (paste a shloka, get chanted audio) with three deployment shapes:
+**local** (`demo/server.py` on your Mac or dev box — offline, personal use), **dedicated GPU
+server** (`demo/server.py` on an always-on GPU box, powers `prathosh.in/vagdhenu/`), and
+**Hugging Face Space** (`demo/app.py` on ZeroGPU — free, public, per-visitor GPU allocation).
+Setup, env vars, and mode-specific caveats: [`demo/README.md`](demo/README.md).
+
+For personal local use, disable the abuse guards with `VAGDHENU_DAILY_LIMIT=0
+VAGDHENU_MAX_AKSHARAS=0` before launching — otherwise the 10-render/day cap counts *you* against
+yourself.
+
 ## Case studies
 - **MBTN** (Mahābhārata Tātparya Nirṇaya) — 32-adhyāya *video* deliverable (Devanagari + Kannada karaoke, tanpura), shipped.
 - **Śrīmad Bhāgavatam** — 12 skandhas, ~18k verses, *audio* app + a 31-video 3-script (Devanāgarī · Kannada · IAST) karaoke series. Sanskrit text gratefully acknowledged to **Poornaprajna Samshodhana Mandiram, Bengaluru**.
