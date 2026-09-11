@@ -86,21 +86,108 @@ but usable for personal pārāyaṇa. Weaker CPUs are proportionally slower.
 
 ---
 
-## Mode 2 — Dedicated GPU server (on-prem or cloud VM)
+## Mode 2 — Dedicated GPU server
 
-Same script as Mode 1, but on a machine with a dedicated GPU that stays warm 24/7. This is what
-runs behind `prathosh.in/vagdhenu/` on Prof. Prathosh's on-prem A6000, and it's what you'd deploy
-on a rented cloud GPU (AWS g4dn, Lambda Labs, RunPod, etc.).
+Same script as Mode 1, but on a machine with a dedicated NVIDIA GPU that stays warm 24/7. This is
+what powers `prathosh.in/vagdhenu/` on Prof. Prathosh's on-prem A6000. It's also the natural fit
+for a rented cloud GPU (AWS EC2, Lambda Labs, RunPod, etc.).
+
+### On an on-prem GPU box (or any Linux GPU host you already own)
+
+Setup is identical to the Linux block in Mode 1; the difference is that `bash scripts/setup.sh`'s
+`cu121` torch wheel now actually uses the GPU, and you'll want to expose the UI on your LAN:
 
 ```bash
-# same setup steps as Mode 1
-export VAGDHENU_HOST=0.0.0.0             # bind on all interfaces for LAN / public access
-# keep the default limits (VAGDHENU_DAILY_LIMIT=10, VAGDHENU_MAX_AKSHARAS=100)
-# — or bump them, e.g. VAGDHENU_DAILY_LIMIT=50 for a trusted user base
+# ... same setup as Mode 1 Linux block ...
+export VAGDHENU_HOST=0.0.0.0                 # bind on all interfaces
+# keep the default limits (VAGDHENU_DAILY_LIMIT=10, VAGDHENU_MAX_AKSHARAS=100) for a public UI
+# — or bump, e.g. VAGDHENU_DAILY_LIMIT=50 for a trusted user base
 python demo/server.py &
 ```
 
-**Notes:**
+Put a reverse proxy (Caddy, nginx, Cloudflare Tunnel) in front for TLS and DNS. `server.py` is
+plain HTTP with no auth — don't expose it directly to the public internet.
+
+### On AWS EC2 (or another cloud GPU rental)
+
+The reference setup we've actually verified end-to-end. Every step below has been run against a
+fresh instance; the CUDA verify session in this branch's development produced a working `.mp3`
+from a `g4dn.4xlarge`.
+
+**1. Pick an instance.**
+
+| Instance | GPU | vCPU / RAM | On-demand price (us-east-1) | Notes |
+|---|---|---|---|---|
+| `g4dn.xlarge` | T4 (16 GB VRAM) | 4 / 16 GB | ~$0.53/hr | Minimum viable. Fine for single-verse renders. |
+| `g4dn.2xlarge` | T4 | 8 / 32 GB | ~$0.75/hr | More headroom for concurrent requests. |
+| `g4dn.4xlarge` | T4 | 16 / 64 GB | ~$1.20/hr | What we verified. Comfortable. |
+| `g5.xlarge` | A10G (24 GB VRAM) | 4 / 16 GB | ~$1.00/hr | ~2× the T4's inference throughput. |
+
+**~$390/month** if left running 24/7 at `g4dn.xlarge`. For occasional personal use, **stop** the
+instance when idle (you pay ~$1/month for the EBS volume only) or terminate entirely and re-launch
+when needed. Peak inference memory is ~2.5 GB, so any of the above has room.
+
+**2. Pick the AMI.** Use the **AWS Deep Learning Base OSS NVIDIA Driver GPU AMI (Ubuntu 22.04)** —
+comes with the NVIDIA driver pre-installed, saves you a driver install + reboot. Look up the
+current AMI ID via SSM (the ID rolls forward as AWS publishes updates):
+
+```bash
+aws ssm get-parameter \
+  --name /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id \
+  --region us-east-1 --query 'Parameter.Value' --output text
+```
+
+**3. Launch + SSH.** Standard EC2 launch. In your security group open **port 22 from your IP only**.
+For the UI, either open port 7860 to your IP too, or SSH-tunnel from your laptop (safer).
+
+**4. On the instance:**
+
+```bash
+# One-time system prep — ~2 min:
+sudo apt-get update && sudo apt-get install -y python3.10-venv ffmpeg
+
+# Clone + checkout (public repo, no auth needed):
+git clone https://github.com/shyamsfo/vagdhenu.git && cd vagdhenu
+git checkout mac-port
+
+# Venv + setup — ~5-10 min (downloads torch cu121 + weights ~500 MB):
+python3.10 -m venv .venv && source .venv/bin/activate
+bash scripts/setup.sh
+
+# Configure runtime env:
+export PYTHONPATH="$PWD/BigVGAN:$PYTHONPATH"
+export VAGDHENU_HOST=0.0.0.0                 # so you can reach it from your laptop
+# personal use: set both to 0 to disable the abuse guards; public: leave at defaults
+# export VAGDHENU_DAILY_LIMIT=0 VAGDHENU_MAX_AKSHARAS=0
+
+python demo/server.py
+# -> "[boot] model warm on cuda (Tesla T4), ready."
+# -> "Running on local URL: http://0.0.0.0:7860"
+```
+
+**On your laptop**, either SSH-tunnel and open the loopback URL:
+
+```bash
+ssh -L 7860:localhost:7860 ubuntu@<instance-public-ip>
+# then in a browser: http://127.0.0.1:7860
+```
+
+...or hit `http://<instance-public-ip>:7860` directly (only if you opened 7860 in the SG).
+
+**Performance on T4:** anuṣṭubh at `nfe 32` renders in a couple of seconds; `nfe 64` (locked
+production config) is ~2× that. Model load at boot: ~30 s.
+
+**Note on the cuDNN trap (auto-handled now, worth knowing about).** The Deep Learning AMI ships
+CUDA 12.8 with cuDNN 9.10.2 on `ldconfig`, but torch 2.4.1+cu121 bundles cuDNN 9.24. Without
+intervention, torch loads its own 9.24 `libcudnn.so.9` but the loader then finds the system's
+9.10.2 `libcudnn_engines_runtime_compiled.so.9` — version mismatch, and the first convolution
+fails with `CUDNN_STATUS_SUBLIBRARY_LOADING_FAILED`. `src/device.py` prepends the venv's bundled
+`nvidia/cudnn/lib` and `nvidia/cublas/lib` to `LD_LIBRARY_PATH` before torch is imported, so this
+just works. If you ever see the cuDNN error and this file is missing that prepend logic, that's
+your regression.
+
+### Notes (both variants)
+
 - `demo/server.py` loads the model *once at process boot* and holds it warm. Every request reuses
   the loaded model — no per-request cold start. This is why a dedicated GPU is worth the recurring
   cost for a public service.
@@ -108,7 +195,7 @@ python demo/server.py &
   a demo; not a durable quota system. If you need something stronger, put nginx / Cloudflare
   in front and rate-limit there.
 - Add a reverse proxy (Caddy, nginx, Cloudflare Tunnel) for TLS and DNS. `server.py` speaks plain
-  HTTP; don't expose it directly.
+  HTTP; don't expose it directly to the public internet without TLS termination.
 
 ---
 
