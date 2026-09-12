@@ -77,8 +77,8 @@ Six-stage smoke harness (~340 lines). Each stage prints PASS/FAIL; `--stages 1 2
 ## `tts.py`
 
 User-facing driver — the reason non-developers care about `scripts/`. Reads a UTF-8 shloka text
-file, splits it on daṇḍa (`।`/`॥`) and newline boundaries, drives `src/render.py` for the whole
-batch, and stitches the per-hemistich wavs into a single MP3 via `ffmpeg`.
+file, splits it into verses (on `॥`) and hemistichs (on `।` + newlines), drives `src/render.py`,
+and stitches the per-hemistich wavs into MP3(s) via `ffmpeg`.
 
 ```bash
 python scripts/tts.py verse.txt                       # -> ./verse.mp3
@@ -88,27 +88,32 @@ python scripts/tts.py verse.txt --keep-wavs           # keep the raw hemistichs
 ```
 
 **Flags:**
-- `-o` / `--output` — output path (default: `<input-stem>.mp3` in current dir).
+- `-o` / `--output` — output path (default: `<input-stem>.mp3` in current dir). With `--chunk-size`, this is a base pattern: `<stem>_001.mp3`, `<stem>_002.mp3`, …
 - `--format` — output format, `mp3` only for now.
-- `--meter` — reference-bank key (default `anushtubh`). Must match a key in `src/reference_bank/bank.json`.
+- `--meter` — reference-bank key (default `anushtubh`). Must match a key in `src/reference_bank/bank.json`. Also the fallback for verses `--auto-meter` can't classify.
+- `--auto-meter` — detect meter per verse via `src/tts_meter.py`. Needs a full 4-pāda verse (or 32 syllables for anuṣṭubh); unrecognized verses fall through to `--meter`.
+- `--chunk-size N` — emit one MP3 per N verses instead of one giant file. Recommended for anything over a few dozen verses: makes failures locally recoverable and produces playable-sized files.
+- `--resume` — with `--chunk-size`, skip chunks whose output MP3 already exists. Rerun the same command after a failure to pick up where it left off.
 - `--nfe` — flow-matching steps (default 32 = serving; 64 = locked production config).
 - `--seed` — per-clip seed (default 60). If a clip's RMS energy falls below threshold, `render.py` will advance the seed up to 4 times before giving up on that clip.
-- `--keep-wavs` — copy the per-hemistich wavs into `<output-stem>_wavs/` alongside the mp3. Recommended for long batches so a crash during the ffmpeg concat doesn't lose the render.
+- `--keep-wavs` — copy the per-hemistich wavs into `<output-stem>_wavs/` alongside each mp3.
 
 **Notes:**
 - Sets `PYTHONPATH` for the render subprocess itself, so you don't need to export it just to run this.
-- Applies one `--meter` to *every* clip. For a text with mixed meters, either chunk it by meter or extend the driver.
-- The temp workdir is deleted on exit — use `--keep-wavs` if you want to keep the raw output.
+- Verse boundaries prefer `॥`; when the input has none, blank-line separated blocks are treated as verses. Verse-number lines (`१`, `1`) are dropped automatically.
+- Resume is per-chunk, not per-hemistich: a chunk that fails mid-render restarts from its first hemistich on rerun. Pick a chunk size that keeps individual-chunk wall time tolerable (e.g. 10–20 anuṣṭubhs).
 
-**Scaling to large texts** (hundreds of verses): chunk into per-chapter text files, `--keep-wavs`, loop:
+**Scaling to large texts** (hundreds+ verses): use `--chunk-size` + `--resume` directly. One command handles the loop, and a failure mid-way is safe to rerun:
 
 ```bash
-for f in chapter_*.txt; do
-  python scripts/tts.py "$f" --nfe 64 --keep-wavs -o "${f%.txt}.mp3"
-done
+python scripts/tts.py bhagavatam.txt --chunk-size 20 --nfe 64 -o bhagavatam.mp3 --resume
+# -> bhagavatam_001.mp3 ... bhagavatam_040.mp3
+# if verse #937 fails, fix and rerun the same line — completed chunks are skipped
 ```
 
-`render.py` continues past failures (retries seeds up to 4×, then gives up on that clip), so **check the results after** — a shard with `FAIL=3/1600` won't be obvious from listening to the mp3.
+For mixed-meter corpora add `--auto-meter`; a summary line prints how many verses fell back to `--meter`.
+
+`render.py` continues past failures (retries seeds up to 4×, then gives up on that clip), so **check the results after** — a shard with `FAIL=3/40` won't be obvious from listening to the mp3.
 
 ---
 

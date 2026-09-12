@@ -64,11 +64,24 @@ Four entrypoints live in `scripts/`. Run them from the repo root with the venv a
 - **`scripts/setup.sh`** — one-shot bootstrap: installs torch + deps, clones NVIDIA BigVGAN, downloads weights into `models/`. Branches on `uname` so the same command works on Linux (CUDA 12.1) and Apple Silicon (Metal). Refuses Intel Macs.
 - **`scripts/download_weights.py`** — fetches the Vāgdhenu weights and the IndicF5 vocab into `$CHAMP_ROOT` (default `models/`). Called by `setup.sh`; run it directly to refresh.
 - **`scripts/selftest.py`** — six-stage smoke harness (environment → kernel coverage → text frontend → single render → batch render → mel-distance comparison). Stages 1–3 need no weights. See `docs/MAC.md` for the full flow.
-- **`scripts/tts.py`** — driver: takes a UTF-8 text file of one or more ślokas, splits on daṇḍas + newlines, drives `src/render.py`, and stitches the hemistich wavs into an MP3.
+- **`scripts/tts.py`** — driver: takes a UTF-8 text file of one or more ślokas, splits into verses (`॥`) and hemistichs (`।` + newlines), drives `src/render.py`, and stitches the hemistich wavs into MP3(s). Handles single verses and 800-verse corpora — chunk with `--chunk-size` for large jobs, `--resume` to pick up after a failure, `--auto-meter` for mixed-meter texts.
   ```
-  python scripts/tts.py verse.txt                    # -> ./verse.mp3
+  python scripts/tts.py verse.txt                                          # -> ./verse.mp3
   python scripts/tts.py verse.txt -o /tmp/x.mp3 --nfe 32 --seed 42
+  python scripts/tts.py corpus.txt --chunk-size 20 -o corpus.mp3 --resume  # -> corpus_001.mp3 ...
   ```
+
+### Rendering a large corpus
+
+For a hundreds-of-verses text (e.g., an 800-verse Bhāgavatam skandha), use `--chunk-size` + `--resume`. One command handles the whole job; a failure mid-way is safe to rerun — completed chunks are skipped.
+
+```bash
+python scripts/tts.py bhagavatam.txt --chunk-size 20 --nfe 64 -o bhagavatam.mp3 --resume
+# -> bhagavatam_001.mp3 ... bhagavatam_040.mp3   (one MP3 per 20 verses, ~2–3 min audio each)
+# if the process dies at verse 937, rerun the same line — completed chunks skip on --resume
+```
+
+Add `--auto-meter` for mixed-meter texts; a summary line reports how many verses fell back to `--meter`. Wall time on a modern GPU is a few hours for 800 verses; on CPU, expect ~2 days — see the RTF table in [`docs/MAC.md`](docs/MAC.md).
 
 ## Interactive UI
 
