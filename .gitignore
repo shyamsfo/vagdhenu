@@ -10,6 +10,8 @@ __pycache__/
 .DS_Store
 .claude/
 out/
+# local scratch: session notes, working inputs, one-off renders
+tmp/
 # weight download target (scripts/download_weights.py)
 models/
 .venv/
