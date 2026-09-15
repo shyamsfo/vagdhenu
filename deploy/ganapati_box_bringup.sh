@@ -76,7 +76,8 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
 done
 
 # 6. Render this shard (~1.7 hr at nfe=64 on L40S for 1/3 of 849 shlokas)
-export PYTHONPATH="$PWD/BigVGAN:$PYTHONPATH"
+export PYTHONPATH="$PWD/BigVGAN:${PYTHONPATH:-}"
+mkdir -p outputs/ganapati
 python scripts/ganapati_batch.py \
   --shard-index "$SHARD_INDEX" --shard-count "$SHARD_COUNT" \
   --nfe 64 \
