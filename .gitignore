@@ -13,10 +13,8 @@ __pycache__/
 .claude/
 .idea/
 out/
-# rendered corpora — the atomic MP3s stay local; per-corpus glue lives on its own branch.
+# rendered corpora — the atomic MP3s stay local; corpus glue lives in scripts/.
 outputs/
-# per-corpus glue scripts land here (see the `ganapati` branch for an example).
-ganapati/
 # local scratch: session notes, working inputs, one-off renders
 tmp/
 # weight download target (scripts/download_weights.py)

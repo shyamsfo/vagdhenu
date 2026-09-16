@@ -1,12 +1,13 @@
 # `scripts/`
 
-Four entrypoints. Run them from the **repo root** with the venv active (`source .venv/bin/activate`)
-and `PYTHONPATH="$PWD/BigVGAN:$PYTHONPATH"` exported. `tts.py` sets `PYTHONPATH` for its own
-subprocess, but the others assume you've done it yourself.
+Six entrypoints. Run them from the **repo root** with the venv active (`source .venv/bin/activate`)
+and `PYTHONPATH="$PWD/BigVGAN:$PYTHONPATH"` exported. `tts.py` and `ganapati_batch.py` set
+`PYTHONPATH` for their own subprocess, but the others assume you've done it yourself.
 
 Rough mental model: **`setup.sh`** gets you a working install (it calls **`download_weights.py`**);
-**`selftest.py`** proves the install works end-to-end; **`tts.py`** is the user-facing driver you
-actually reach for once it does.
+**`selftest.py`** proves the install works end-to-end; **`tts.py`** is the user-facing driver for
+ad-hoc verses. **`ganapati_batch.py`** + **`ganapati_stitch.py`** are the corpus-specific pair
+driven by `deploy/render_shard.sh` when fanning out to three GPU boxes — see `deploy/README.md`.
 
 ---
 
@@ -117,5 +118,52 @@ For mixed-meter corpora add `--auto-meter`; a summary line prints how many verse
 
 ---
 
+## `ganapati_batch.py`
+
+Corpus-specific renderer for `kolluruss/ganapati-sambhavam-site` (10 sargas, 847 ślokas, all
+śārdūlavikrīḍita). Loads all `sarga-*.json` from `--input-dir`, flattens to a stable order,
+round-robin shards on `--shard-index / --shard-count`, and renders each entry to
+`<output-dir>/shlokas/sarga-NN-shloka-NNN.mp3`. Loads the Renderer once; skips existing MP3s
+by default (`--no-resume` to force re-render). Writes per-shard `manifest.shard-<i>-of-<n>.json`
++ `preprocessing_report.shard-<i>-of-<n>.txt` next to the shlokas dir.
+
+Meter is hardcoded to `shardulavikridita` — verified by inspection of the source. Locked-quality
+defaults match `render.py` (nfe 64, cfg 3.0, speed 0.90, seed 60).
+
+**Pre-processing filter:** `prep_text.strip_punct` passes stray Latin letters and non-Devanagari
+Brahmic glyphs through to the sanscript Deva→SLP1→Kannada step, which then produces gibberish.
+This script pre-filters anything outside the Devanagari block + ASCII punct/digits and logs
+every drop into the shard's preprocessing report. Check the report; if a specific shloka has
+many drops, the source needs fixing upstream.
+
+**When to run:** by hand for single-shard smoke tests
+(`python scripts/ganapati_batch.py --shard-index 0 --shard-count 1 --limit 3`); otherwise via
+`deploy/render_shard.sh`, which handles fetching the sarga JSONs, detaching via `setsid`, and
+writing sentinel files that `deploy/render_watch.sh` polls.
+
+---
+
+## `ganapati_stitch.py`
+
+Post-processing after all shards' outputs have been rsync'd back to one host (`render_watch.sh`
+does the rsync incrementally). Merges `manifest.shard-*.json` into `manifest.json`,
+ffmpeg-concats the per-shloka MP3s into per-sarga MP3s (`sarga-01.mp3` through `sarga-10.mp3`)
+with a 900 ms silent gap between shlokas, and produces a single `preprocessing_report.txt`.
+
+Idempotent — re-run whenever new shards land or a shloka is re-rendered. Missing shlokas are
+logged as `missing_file`, not fatal. Verifies render params match across shards and warns on
+mismatch.
+
+```bash
+python scripts/ganapati_stitch.py                            # defaults to outputs/ganapati
+python scripts/ganapati_stitch.py --output-dir /path/to/out  # custom location
+```
+
+**When to run:** after all three shards' `render_watch.sh` reports `DONE` and one final
+`rsync` pass has landed the shloka MP3s locally.
+
+---
+
 For the higher-level project overview see the top-level [`README.md`](../README.md). For the Mac-specific
-setup and run order, see [`../docs/MAC.md`](../docs/MAC.md).
+setup and run order, see [`../docs/MAC.md`](../docs/MAC.md). For the Mac→AWS render pipeline
+see [`../deploy/README.md`](../deploy/README.md).
