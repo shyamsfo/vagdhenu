@@ -16,7 +16,9 @@ from pathlib import Path
 from collections import defaultdict
 
 REPO = Path(__file__).resolve().parent.parent
-GAP_MS = 900   # inter-shloka gap; longer than tts.py's 350ms since these are full shlokas, not hemistichs
+GAP_MS = 900   # default inter-shloka gap; longer than tts.py's 350ms since these are full shlokas, not hemistichs.
+               # For downstream silence-detection (Audacity, ffmpeg silencedetect) pass --gap-ms 1500 or higher —
+               # natural intra-shloka pauses run 300–500ms and default detectors want >=1s to fire.
 
 
 def concat_mp3(mp3s: list[Path], out_mp3: Path, gap_ms: int = GAP_MS) -> None:
@@ -57,6 +59,10 @@ def main() -> None:
     ap.add_argument("--per-sarga", action="store_true", default=True,
                     help="build per-sarga MP3s (default on)")
     ap.add_argument("--no-per-sarga", dest="per_sarga", action="store_false")
+    ap.add_argument("--gap-ms", type=int, default=GAP_MS,
+                    help=f"silence between shlokas in ms (default {GAP_MS}; use 1500+ for auto silence-detection)")
+    ap.add_argument("--output-suffix", default="",
+                    help="suffix appended to per-sarga MP3 names, e.g. '-paused' -> sarga-01-paused.mp3")
     args = ap.parse_args()
 
     out_dir = args.output_dir
@@ -124,9 +130,9 @@ def main() -> None:
                 by_sarga[e["sarga"]].append(out_dir / e["mp3"])
         for sarga in sorted(by_sarga):
             mp3s = sorted(by_sarga[sarga], key=lambda p: p.name)
-            out_mp3 = out_dir / f"sarga-{sarga:02d}.mp3"
-            print(f"[stitch] sarga-{sarga:02d}: concatenating {len(mp3s)} shlokas -> {out_mp3.name}")
-            concat_mp3(mp3s, out_mp3)
+            out_mp3 = out_dir / f"sarga-{sarga:02d}{args.output_suffix}.mp3"
+            print(f"[stitch] sarga-{sarga:02d}: concatenating {len(mp3s)} shlokas ({args.gap_ms}ms gap) -> {out_mp3.name}")
+            concat_mp3(mp3s, out_mp3, gap_ms=args.gap_ms)
 
     print("[stitch] done.")
 
